@@ -1,5 +1,5 @@
 import {
-  parse,
+  baseParse as parse,
   transform,
   ElementNode,
   DirectiveNode,
@@ -30,6 +30,24 @@ describe('compiler: expression transform', () => {
       type: NodeTypes.SIMPLE_EXPRESSION,
       content: `_ctx.foo`
     })
+  })
+
+  test('empty interpolation', () => {
+    const node = parseWithExpressionTransform(`{{}}`) as InterpolationNode
+    const node2 = parseWithExpressionTransform(`{{ }}`) as InterpolationNode
+    const node3 = parseWithExpressionTransform(
+      `<div>{{ }}</div>`
+    ) as ElementNode
+
+    const objectToBeMatched = {
+      type: NodeTypes.SIMPLE_EXPRESSION,
+      content: ``
+    }
+    expect(node.content).toMatchObject(objectToBeMatched)
+    expect(node2.content).toMatchObject(objectToBeMatched)
+    expect((node3.children[0] as InterpolationNode).content).toMatchObject(
+      objectToBeMatched
+    )
   })
 
   test('interpolation (children)', () => {
@@ -288,14 +306,29 @@ describe('compiler: expression transform', () => {
       ]
     })
   })
-
   test('should not prefix an object property key', () => {
     const node = parseWithExpressionTransform(
-      `{{ { foo: bar } }}`
+      `{{ { foo() { baz() }, value: bar } }}`
     ) as InterpolationNode
     expect(node.content).toMatchObject({
       type: NodeTypes.COMPOUND_EXPRESSION,
-      children: [`{ foo: `, { content: `_ctx.bar` }, ` }`]
+      children: [
+        `{ foo() { `,
+        { content: `_ctx.baz` },
+        `() }, value: `,
+        { content: `_ctx.bar` },
+        ` }`
+      ]
+    })
+  })
+
+  test('should not duplicate object key with same name as value', () => {
+    const node = parseWithExpressionTransform(
+      `{{ { foo: foo } }}`
+    ) as InterpolationNode
+    expect(node.content).toMatchObject({
+      type: NodeTypes.COMPOUND_EXPRESSION,
+      children: [`{ foo: `, { content: `_ctx.foo` }, ` }`]
     })
   })
 
@@ -361,6 +394,66 @@ describe('compiler: expression transform', () => {
   test('should handle parse error', () => {
     const onError = jest.fn()
     parseWithExpressionTransform(`{{ a( }}`, { onError })
-    expect(onError.mock.calls[0][0].message).toMatch(`Unexpected token (1:4)`)
+    expect(onError.mock.calls[0][0].message).toMatch(
+      `Error parsing JavaScript expression: Unexpected token`
+    )
+  })
+
+  describe('ES Proposals support', () => {
+    test('bigInt', () => {
+      const node = parseWithExpressionTransform(
+        `{{ 13000n }}`
+      ) as InterpolationNode
+      expect(node.content).toMatchObject({
+        type: NodeTypes.SIMPLE_EXPRESSION,
+        content: `13000n`,
+        isStatic: false,
+        isConstant: true
+      })
+    })
+
+    test('nullish coalescing', () => {
+      const node = parseWithExpressionTransform(
+        `{{ a ?? b }}`
+      ) as InterpolationNode
+      expect(node.content).toMatchObject({
+        type: NodeTypes.COMPOUND_EXPRESSION,
+        children: [{ content: `_ctx.a` }, ` ?? `, { content: `_ctx.b` }]
+      })
+    })
+
+    test('optional chaining', () => {
+      const node = parseWithExpressionTransform(
+        `{{ a?.b?.c }}`
+      ) as InterpolationNode
+      expect(node.content).toMatchObject({
+        type: NodeTypes.COMPOUND_EXPRESSION,
+        children: [
+          { content: `_ctx.a` },
+          `?.`,
+          { content: `b` },
+          `?.`,
+          { content: `c` }
+        ]
+      })
+    })
+
+    test('Enabling additional plugins', () => {
+      // enabling pipeline operator to replace filters:
+      const node = parseWithExpressionTransform(`{{ a |> uppercase }}`, {
+        expressionPlugins: [
+          [
+            'pipelineOperator',
+            {
+              proposal: 'minimal'
+            }
+          ]
+        ]
+      }) as InterpolationNode
+      expect(node.content).toMatchObject({
+        type: NodeTypes.COMPOUND_EXPRESSION,
+        children: [{ content: `_ctx.a` }, ` |> `, { content: `_ctx.uppercase` }]
+      })
+    })
   })
 })

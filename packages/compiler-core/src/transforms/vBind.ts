@@ -4,15 +4,12 @@ import { createCompilerError, ErrorCodes } from '../errors'
 import { camelize } from '@vue/shared'
 import { CAMELIZE } from '../runtimeHelpers'
 
-// v-bind without arg is handled directly in ./element.ts due to it affecting
+// v-bind without arg is handled directly in ./transformElements.ts due to it affecting
 // codegen for the entire props object. This transform here is only for v-bind
 // *with* args.
 export const transformBind: DirectiveTransform = (dir, node, context) => {
   const { exp, modifiers, loc } = dir
   const arg = dir.arg!
-  if (!exp) {
-    context.onError(createCompilerError(ErrorCodes.X_V_BIND_NO_EXPRESSION, loc))
-  }
   // .prop is no longer necessary due to new patch behavior
   // .sync is replaced by v-model:arg
   if (modifiers.includes('camel')) {
@@ -27,10 +24,18 @@ export const transformBind: DirectiveTransform = (dir, node, context) => {
       arg.children.push(`)`)
     }
   }
+
+  if (
+    !exp ||
+    (exp.type === NodeTypes.SIMPLE_EXPRESSION && !exp.content.trim())
+  ) {
+    context.onError(createCompilerError(ErrorCodes.X_V_BIND_NO_EXPRESSION, loc))
+    return {
+      props: [createObjectProperty(arg!, createSimpleExpression('', true, loc))]
+    }
+  }
+
   return {
-    props: [
-      createObjectProperty(arg!, exp || createSimpleExpression('', true, loc))
-    ],
-    needRuntime: false
+    props: [createObjectProperty(arg!, exp)]
   }
 }

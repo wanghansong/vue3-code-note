@@ -1,11 +1,11 @@
 import {
-  parse,
+  baseParse as parse,
   transform,
   ElementNode,
   ObjectExpression,
   CompilerOptions,
   ErrorCodes,
-  CallExpression
+  VNodeCall
 } from '../../src'
 import { transformBind } from '../../src/transforms/vBind'
 import { transformElement } from '../../src/transforms/transformElement'
@@ -33,8 +33,7 @@ function parseWithVBind(
 describe('compiler: transform v-bind', () => {
   test('basic', () => {
     const node = parseWithVBind(`<div v-bind:id="id"/>`)
-    const props = (node.codegenNode as CallExpression)
-      .arguments[1] as ObjectExpression
+    const props = (node.codegenNode as VNodeCall).props as ObjectExpression
     expect(props.properties[0]).toMatchObject({
       key: {
         content: `id`,
@@ -69,8 +68,7 @@ describe('compiler: transform v-bind', () => {
 
   test('dynamic arg', () => {
     const node = parseWithVBind(`<div v-bind:[id]="id"/>`)
-    const props = (node.codegenNode as CallExpression)
-      .arguments[1] as ObjectExpression
+    const props = (node.codegenNode as VNodeCall).props as ObjectExpression
     expect(props.properties[0]).toMatchObject({
       key: {
         content: `id`,
@@ -85,7 +83,8 @@ describe('compiler: transform v-bind', () => {
 
   test('should error if no expression', () => {
     const onError = jest.fn()
-    parseWithVBind(`<div v-bind:arg />`, { onError })
+    const node = parseWithVBind(`<div v-bind:arg />`, { onError })
+    const props = (node.codegenNode as VNodeCall).props as ObjectExpression
     expect(onError.mock.calls[0][0]).toMatchObject({
       code: ErrorCodes.X_V_BIND_NO_EXPRESSION,
       loc: {
@@ -99,12 +98,21 @@ describe('compiler: transform v-bind', () => {
         }
       }
     })
+    expect(props.properties[0]).toMatchObject({
+      key: {
+        content: `arg`,
+        isStatic: true
+      },
+      value: {
+        content: ``,
+        isStatic: true
+      }
+    })
   })
 
   test('.camel modifier', () => {
     const node = parseWithVBind(`<div v-bind:foo-bar.camel="id"/>`)
-    const props = (node.codegenNode as CallExpression)
-      .arguments[1] as ObjectExpression
+    const props = (node.codegenNode as VNodeCall).props as ObjectExpression
     expect(props.properties[0]).toMatchObject({
       key: {
         content: `fooBar`,
@@ -119,8 +127,7 @@ describe('compiler: transform v-bind', () => {
 
   test('.camel modifier w/ dynamic arg', () => {
     const node = parseWithVBind(`<div v-bind:[foo].camel="id"/>`)
-    const props = (node.codegenNode as CallExpression)
-      .arguments[1] as ObjectExpression
+    const props = (node.codegenNode as VNodeCall).props as ObjectExpression
     expect(props.properties[0]).toMatchObject({
       key: {
         content: `_${helperNameMap[CAMELIZE]}(foo)`,
@@ -137,12 +144,11 @@ describe('compiler: transform v-bind', () => {
     const node = parseWithVBind(`<div v-bind:[foo(bar)].camel="id"/>`, {
       prefixIdentifiers: true
     })
-    const props = (node.codegenNode as CallExpression)
-      .arguments[1] as ObjectExpression
+    const props = (node.codegenNode as VNodeCall).props as ObjectExpression
     expect(props.properties[0]).toMatchObject({
       key: {
         children: [
-          `${helperNameMap[CAMELIZE]}(`,
+          `_${helperNameMap[CAMELIZE]}(`,
           { content: `_ctx.foo` },
           `(`,
           { content: `_ctx.bar` },

@@ -13,10 +13,10 @@ import {
   onUnmounted,
   onRenderTracked,
   reactive,
-  OperationTypes,
+  TrackOpTypes,
   onRenderTriggered
 } from '@vue/runtime-test'
-import { ITERATE_KEY, DebuggerEvent } from '@vue/reactivity'
+import { ITERATE_KEY, DebuggerEvent, TriggerOpTypes } from '@vue/reactivity'
 
 // reference: https://vue-composition-api-rfc.netlify.com/api.html#lifecycle-hooks
 
@@ -74,6 +74,36 @@ describe('api: lifecycle hooks', () => {
     count.value++
     await nextTick()
     expect(fn).toHaveBeenCalledTimes(1)
+    expect(serializeInner(root)).toBe(`<div>1</div>`)
+  })
+
+  it('state mutation in onBeforeUpdate', async () => {
+    const count = ref(0)
+    const root = nodeOps.createElement('div')
+    const fn = jest.fn(() => {
+      // should be called before inner div is updated
+      expect(serializeInner(root)).toBe(`<div>0</div>`)
+      count.value++
+    })
+    const renderSpy = jest.fn()
+
+    const Comp = {
+      setup() {
+        onBeforeUpdate(fn)
+        return () => {
+          renderSpy()
+          return h('div', count.value)
+        }
+      }
+    }
+    render(h(Comp), root)
+    expect(renderSpy).toHaveBeenCalledTimes(1)
+
+    count.value++
+    await nextTick()
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(renderSpy).toHaveBeenCalledTimes(2)
+    expect(serializeInner(root)).toBe(`<div>2</div>`)
   })
 
   it('onUpdated', async () => {
@@ -283,17 +313,17 @@ describe('api: lifecycle hooks', () => {
     expect(events).toMatchObject([
       {
         target: obj,
-        type: OperationTypes.GET,
+        type: TrackOpTypes.GET,
         key: 'foo'
       },
       {
         target: obj,
-        type: OperationTypes.HAS,
+        type: TrackOpTypes.HAS,
         key: 'bar'
       },
       {
         target: obj,
-        type: OperationTypes.ITERATE,
+        type: TrackOpTypes.ITERATE,
         key: ITERATE_KEY
       }
     ])
@@ -320,17 +350,18 @@ describe('api: lifecycle hooks', () => {
     await nextTick()
     expect(onTrigger).toHaveBeenCalledTimes(1)
     expect(events[0]).toMatchObject({
-      type: OperationTypes.SET,
+      type: TriggerOpTypes.SET,
       key: 'foo',
       oldValue: 1,
       newValue: 2
     })
 
+    // @ts-ignore
     delete obj.bar
     await nextTick()
     expect(onTrigger).toHaveBeenCalledTimes(2)
     expect(events[1]).toMatchObject({
-      type: OperationTypes.DELETE,
+      type: TriggerOpTypes.DELETE,
       key: 'bar',
       oldValue: 2
     })
@@ -338,7 +369,7 @@ describe('api: lifecycle hooks', () => {
     await nextTick()
     expect(onTrigger).toHaveBeenCalledTimes(3)
     expect(events[2]).toMatchObject({
-      type: OperationTypes.ADD,
+      type: TriggerOpTypes.ADD,
       key: 'baz',
       newValue: 3
     })

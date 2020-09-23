@@ -1,4 +1,14 @@
-import { ref, nodeOps, h, render, nextTick, Ref } from '@vue/runtime-test'
+import {
+  ref,
+  nodeOps,
+  h,
+  render,
+  nextTick,
+  defineComponent,
+  reactive,
+  serializeInner,
+  shallowRef
+} from '@vue/runtime-test'
 
 // reference: https://vue-composition-api-rfc.netlify.com/api.html#template-refs
 
@@ -71,6 +81,50 @@ describe('api: template refs', () => {
     expect(el.value).toBe(null)
   })
 
+  it('function ref mount', () => {
+    const root = nodeOps.createElement('div')
+    const fn = jest.fn()
+
+    const Comp = defineComponent(() => () => h('div', { ref: fn }))
+    render(h(Comp), root)
+    expect(fn.mock.calls[0][0]).toBe(root.children[0])
+  })
+
+  it('function ref update', async () => {
+    const root = nodeOps.createElement('div')
+    const fn1 = jest.fn()
+    const fn2 = jest.fn()
+    const fn = ref(fn1)
+
+    const Comp = defineComponent(() => () => h('div', { ref: fn.value }))
+
+    render(h(Comp), root)
+    expect(fn1.mock.calls).toHaveLength(1)
+    expect(fn1.mock.calls[0][0]).toBe(root.children[0])
+    expect(fn2.mock.calls).toHaveLength(0)
+
+    fn.value = fn2
+    await nextTick()
+    expect(fn1.mock.calls).toHaveLength(1)
+    expect(fn2.mock.calls).toHaveLength(1)
+    expect(fn2.mock.calls[0][0]).toBe(root.children[0])
+  })
+
+  it('function ref unmount', async () => {
+    const root = nodeOps.createElement('div')
+    const fn = jest.fn()
+    const toggle = ref(true)
+
+    const Comp = defineComponent(() => () =>
+      toggle.value ? h('div', { ref: fn }) : null
+    )
+    render(h(Comp), root)
+    expect(fn.mock.calls[0][0]).toBe(root.children[0])
+    toggle.value = false
+    await nextTick()
+    expect(fn.mock.calls[1][0]).toBe(null)
+  })
+
   it('render function ref mount', () => {
     const root = nodeOps.createElement('div')
     const el = ref(null)
@@ -90,7 +144,7 @@ describe('api: template refs', () => {
       foo: ref(null),
       bar: ref(null)
     }
-    const refKey: Ref<keyof typeof refs> = ref('foo')
+    const refKey = ref<keyof typeof refs>('foo')
 
     const Comp = {
       setup() {
@@ -123,5 +177,192 @@ describe('api: template refs', () => {
     toggle.value = false
     await nextTick()
     expect(el.value).toBe(null)
+  })
+
+  test('string ref inside slots', async () => {
+    const root = nodeOps.createElement('div')
+    const spy = jest.fn()
+    const Child = {
+      render(this: any) {
+        return this.$slots.default()
+      }
+    }
+
+    const Comp = {
+      render() {
+        return h(Child, () => {
+          return h('div', { ref: 'foo' })
+        })
+      },
+      mounted(this: any) {
+        spy(this.$refs.foo.tag)
+      }
+    }
+    render(h(Comp), root)
+
+    expect(spy).toHaveBeenCalledWith('div')
+  })
+
+  it('should work with direct reactive property', () => {
+    const root = nodeOps.createElement('div')
+    const state = reactive({
+      refKey: null
+    })
+
+    const Comp = {
+      setup() {
+        return state
+      },
+      render() {
+        return h('div', { ref: 'refKey' })
+      }
+    }
+    render(h(Comp), root)
+    expect(state.refKey).toBe(root.children[0])
+  })
+
+  test('multiple root refs', () => {
+    const root = nodeOps.createElement('div')
+    const refKey1 = ref(null)
+    const refKey2 = ref(null)
+    const refKey3 = ref(null)
+
+    const Comp = {
+      setup() {
+        return {
+          refKey1,
+          refKey2,
+          refKey3
+        }
+      },
+      render() {
+        return [
+          h('div', { ref: 'refKey1' }),
+          h('div', { ref: 'refKey2' }),
+          h('div', { ref: 'refKey3' })
+        ]
+      }
+    }
+    render(h(Comp), root)
+    expect(refKey1.value).toBe(root.children[1])
+    expect(refKey2.value).toBe(root.children[2])
+    expect(refKey3.value).toBe(root.children[3])
+  })
+
+  // #1505
+  test('reactive template ref in the same template', async () => {
+    const Comp = {
+      setup() {
+        const el = ref()
+        return { el }
+      },
+      render(this: any) {
+        return h('div', { id: 'foo', ref: 'el' }, this.el && this.el.props.id)
+      }
+    }
+
+    const root = nodeOps.createElement('div')
+    render(h(Comp), root)
+    // ref not ready on first render, but should queue an update immediately
+    expect(serializeInner(root)).toBe(`<div id="foo"></div>`)
+    await nextTick()
+    // ref should be updated
+    expect(serializeInner(root)).toBe(`<div id="foo">foo</div>`)
+  })
+
+  // #1834
+  test('exchange refs', async () => {
+    const refToggle = ref(false)
+    const spy = jest.fn()
+
+    const Comp = {
+      render(this: any) {
+        return [
+          h('p', { ref: refToggle.value ? 'foo' : 'bar' }),
+          h('i', { ref: refToggle.value ? 'bar' : 'foo' })
+        ]
+      },
+      mounted(this: any) {
+        spy(this.$refs.foo.tag, this.$refs.bar.tag)
+      },
+      updated(this: any) {
+        spy(this.$refs.foo.tag, this.$refs.bar.tag)
+      }
+    }
+
+    const root = nodeOps.createElement('div')
+    render(h(Comp), root)
+
+    expect(spy.mock.calls[0][0]).toBe('i')
+    expect(spy.mock.calls[0][1]).toBe('p')
+    refToggle.value = true
+    await nextTick()
+    expect(spy.mock.calls[1][0]).toBe('p')
+    expect(spy.mock.calls[1][1]).toBe('i')
+  })
+
+  // #1789
+  test('toggle the same ref to different elements', async () => {
+    const refToggle = ref(false)
+    const spy = jest.fn()
+
+    const Comp = {
+      render(this: any) {
+        return refToggle.value ? h('p', { ref: 'foo' }) : h('i', { ref: 'foo' })
+      },
+      mounted(this: any) {
+        spy(this.$refs.foo.tag)
+      },
+      updated(this: any) {
+        spy(this.$refs.foo.tag)
+      }
+    }
+
+    const root = nodeOps.createElement('div')
+    render(h(Comp), root)
+
+    expect(spy.mock.calls[0][0]).toBe('i')
+    refToggle.value = true
+    await nextTick()
+    expect(spy.mock.calls[1][0]).toBe('p')
+  })
+
+  // #2078
+  test('handling multiple merged refs', async () => {
+    const Foo = {
+      render: () => h('div', 'foo')
+    }
+    const Bar = {
+      render: () => h('div', 'bar')
+    }
+
+    const viewRef = shallowRef<any>(Foo)
+    const elRef1 = ref()
+    const elRef2 = ref()
+
+    const App = {
+      render() {
+        if (!viewRef.value) {
+          return null
+        }
+        const view = h(viewRef.value, { ref: elRef1 })
+        return h(view, { ref: elRef2 })
+      }
+    }
+    const root = nodeOps.createElement('div')
+    render(h(App), root)
+
+    expect(serializeInner(elRef1.value.$el)).toBe('foo')
+    expect(elRef1.value).toBe(elRef2.value)
+
+    viewRef.value = Bar
+    await nextTick()
+    expect(serializeInner(elRef1.value.$el)).toBe('bar')
+    expect(elRef1.value).toBe(elRef2.value)
+
+    viewRef.value = null
+    await nextTick()
+    expect(elRef1.value).toBeNull()
+    expect(elRef1.value).toBe(elRef2.value)
   })
 })
